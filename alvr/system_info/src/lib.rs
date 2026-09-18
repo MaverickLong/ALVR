@@ -34,7 +34,6 @@ pub enum Platform {
     ViveUnknown,
     Yvr,
     PlayForDreamMR,
-    Lynx,
     AndroidUnknown,
     AppleHeadset,
     WindowsPc,
@@ -103,7 +102,6 @@ impl Display for Platform {
             Platform::ViveUnknown => "HTC VIVE (unknown)",
             Platform::Yvr => "YVR",
             Platform::PlayForDreamMR => "Play For Dream MR",
-            Platform::Lynx => "Lynx Headset",
             Platform::AndroidUnknown => "Android (unknown)",
             Platform::AppleHeadset => "Apple Headset",
             Platform::WindowsPc => "Windows PC",
@@ -152,7 +150,6 @@ pub fn platform() -> Platform {
             ("HTC", _, _, _) => Platform::ViveUnknown,
             ("YVR", _, _, _) => Platform::Yvr,
             ("Play For Dream", _, _, _) => Platform::PlayForDreamMR,
-            ("Lynx Mixed Reality", _, _, _) => Platform::Lynx,
             _ => Platform::AndroidUnknown,
         }
     }

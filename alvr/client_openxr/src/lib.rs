@@ -146,7 +146,6 @@ pub fn entry_point() {
         | Platform::Pico4Pro
         | Platform::Pico4Enterprise => "_pico_old",
         p if p.is_yvr() => "_yvr",
-        Platform::Lynx => "_lynx",
         _ => "",
     };
     let xr_entry = unsafe {

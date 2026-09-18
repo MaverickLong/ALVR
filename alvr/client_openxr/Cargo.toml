@@ -199,9 +199,3 @@ value = "5900"
 [[package.metadata.android.application.meta_data]]
 name = "com.yvr.intent.category.VR"
 value = "vr_only"
-
-# Lynx entries
-[[package.metadata.android.queries.package]]
-name = "com.ultraleap.tracking.service"
-[[package.metadata.android.queries.package]]
-name = "com.ultraleap.openxr.api_layer"
