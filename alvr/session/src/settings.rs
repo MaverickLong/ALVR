@@ -937,6 +937,23 @@ pub struct PerformanceLevelConfig {
     pub gpu: Switch<PerformanceLevel>,
 }
 
+#[derive(SettingsSchema, Serialize, Deserialize, Clone)]
+pub struct EyeCamerasConfig {
+    #[schema(strings(
+        help = "Frames per second sent to the PC. The cameras run at 120Hz; higher values cost headset CPU and Wi-Fi bandwidth."
+    ))]
+    #[schema(gui(slider(min = 5, max = 120)), suffix = "fps")]
+    pub fps: u32,
+    #[schema(strings(display_name = "JPEG quality"))]
+    #[schema(gui(slider(min = 10, max = 100)))]
+    pub jpeg_quality: u32,
+    #[schema(strings(
+        display_name = "HTTP port",
+        help = "Port of the MJPEG server on this PC (bound to 127.0.0.1)"
+    ))]
+    pub http_port: u16,
+}
+
 #[derive(SettingsSchema, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FaceTrackingSourcesConfig {
     pub eye_tracking_fb: bool,
@@ -1342,6 +1359,13 @@ Measured on the VIVE Focus Vision: Power Saving releases the runtime performance
 Mileage may vary on other devices."#
     ))]
     pub performance_level: PerformanceLevelConfig,
+
+    #[schema(strings(
+        display_name = "Eye cameras streaming",
+        help = r#"VIVE Focus Vision only. Reads the raw infrared eye tracking cameras over USB and serves them on this PC as MJPEG streams for PC-side eye tracking software (EyeTrackVR, Baballonia): http://127.0.0.1:<port>/left.mjpg and /right.mjpg (also /left.jpg and /right.jpg for single frames).
+The headset asks for the camera and USB permissions (the USB permission is asked again whenever the cameras are re-enumerated). The headset eye tracking must be enabled (it powers the cameras) but its service must not hold the camera: after enabling eye tracking, run once `adb shell am force-stop com.htc.vr.device.eye`. Applied on the next connection."#
+    ))]
+    pub eye_cameras: Switch<EyeCamerasConfig>,
 
     #[schema(flag = "steamvr-restart")]
     pub extra_openvr_props: Vec<OpenvrProperty>,
@@ -1961,6 +1985,14 @@ pub fn session_settings_default() -> SettingsDefault {
                     content: PerformanceLevelDefault {
                         variant: PerformanceLevelDefaultVariant::PowerSavings,
                     },
+                },
+            },
+            eye_cameras: SwitchDefault {
+                enabled: false,
+                content: EyeCamerasConfigDefault {
+                    fps: 30,
+                    jpeg_quality: 80,
+                    http_port: 9945,
                 },
             },
             extra_openvr_props: default_custom_openvr_props.clone(),

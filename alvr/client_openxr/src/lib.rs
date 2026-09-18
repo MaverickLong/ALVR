@@ -1,5 +1,7 @@
 mod c_api;
 mod extra_extensions;
+#[cfg(target_os = "android")]
+mod eye_camera;
 mod graphics;
 mod hand_tracking_gate;
 mod interaction;

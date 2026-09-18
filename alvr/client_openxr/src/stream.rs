@@ -21,8 +21,8 @@ use alvr_graphics::{
 use alvr_packets::{FaceData, RealTimeConfig, StreamConfig};
 use alvr_session::{
     ClientsideFoveationConfig, ClientsideFoveationMode, ClientsidePostProcessingConfig, CodecType,
-    FaceTrackingSourcesConfig, FoveatedEncodingConfig, MediacodecProperty, PassthroughMode,
-    UpscalingConfig,
+    EyeCamerasConfig, FaceTrackingSourcesConfig, FoveatedEncodingConfig, MediacodecProperty,
+    PassthroughMode, UpscalingConfig,
 };
 use alvr_system_info::Platform;
 use openxr as xr;
@@ -150,6 +150,7 @@ pub struct ParsedStreamConfig {
     pub buffering_history_weight: f32,
     pub decoder_options: Vec<(String, MediacodecProperty)>,
     pub interaction_sources: InteractionSourcesConfig,
+    pub eye_cameras: Option<EyeCamerasConfig>,
 }
 
 impl ParsedStreamConfig {
@@ -184,6 +185,7 @@ impl ParsedStreamConfig {
             buffering_history_weight: config.settings.video.buffering_history_weight,
             decoder_options: config.settings.video.mediacodec_extra_options.clone(),
             interaction_sources: InteractionSourcesConfig::new(config),
+            eye_cameras: config.settings.headset.eye_cameras.as_option().cloned(),
         }
     }
 }
@@ -203,6 +205,9 @@ pub struct StreamContext {
     renderer: StreamRenderer,
     decoder: Option<(VideoDecoderConfig, VideoDecoderSource)>,
     use_custom_reprojection: bool,
+    // Stopped when dropped
+    #[cfg(target_os = "android")]
+    _eye_cameras_streamer: Option<crate::eye_camera::EyeCamerasStreamer>,
 }
 
 impl StreamContext {
@@ -325,6 +330,16 @@ impl StreamContext {
             xr::ReferenceSpaceType::VIEW,
         ));
 
+        // Vive only: the HTC eye cameras are read over USB
+        #[cfg(target_os = "android")]
+        let eye_cameras_streamer = config
+            .eye_cameras
+            .clone()
+            .filter(|_| platform.is_vive())
+            .map(|eye_cameras| {
+                crate::eye_camera::EyeCamerasStreamer::new(Arc::clone(&core_ctx), eye_cameras)
+            });
+
         let mut this = StreamContext {
             core_context: core_ctx,
             xr_session,
@@ -340,6 +355,8 @@ impl StreamContext {
             renderer,
             decoder: None,
             use_custom_reprojection: platform.is_yvr(),
+            #[cfg(target_os = "android")]
+            _eye_cameras_streamer: eye_cameras_streamer,
         };
 
         this.update_reference_space();

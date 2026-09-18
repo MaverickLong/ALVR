@@ -23,6 +23,7 @@ pub const HAPTICS: u16 = 1;
 pub const AUDIO: u16 = 2;
 pub const VIDEO: u16 = 3;
 pub const STATISTICS: u16 = 4;
+pub const EYE_CAMERA: u16 = 5;
 
 // todo: use simple string
 #[derive(Serialize, Deserialize, Clone)]
@@ -286,6 +287,13 @@ pub struct FaceData {
 pub struct VideoPacketHeader {
     pub timestamp: Duration,
     pub is_idr: bool,
+}
+
+// The payload is the left eye JPEG followed by the right eye JPEG
+#[derive(Serialize, Deserialize)]
+pub struct EyeCameraFrameHeader {
+    pub timestamp: Duration,
+    pub left_jpeg_size: u32,
 }
 
 // Note: face_data does not respect target_timestamp.

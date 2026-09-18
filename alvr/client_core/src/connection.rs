@@ -15,9 +15,9 @@ use alvr_common::{
     Pose, RelaxedAtomic, ViewParams, ALVR_VERSION,
 };
 use alvr_packets::{
-    ClientConnectionResult, ClientControlPacket, ClientStatistics, Haptics, RealTimeConfig,
-    ServerControlPacket, StreamConfigPacket, Tracking, VideoPacketHeader,
-    VideoStreamingCapabilities, AUDIO, HAPTICS, STATISTICS, TRACKING, VIDEO,
+    ClientConnectionResult, ClientControlPacket, ClientStatistics, EyeCameraFrameHeader, Haptics,
+    RealTimeConfig, ServerControlPacket, StreamConfigPacket, Tracking, VideoPacketHeader,
+    VideoStreamingCapabilities, AUDIO, EYE_CAMERA, HAPTICS, STATISTICS, TRACKING, VIDEO,
 };
 use alvr_session::{settings_schema::Switch, SocketProtocol};
 use alvr_sockets::{
@@ -72,6 +72,7 @@ pub struct ConnectionContext {
     pub control_sender: Mutex<Option<ControlSocketSender<ClientControlPacket>>>,
     pub tracking_sender: Mutex<Option<StreamSender<Tracking>>>,
     pub statistics_sender: Mutex<Option<StreamSender<ClientStatistics>>>,
+    pub eye_camera_sender: Mutex<Option<StreamSender<EyeCameraFrameHeader>>>,
     pub statistics_manager: Mutex<Option<StatisticsManager>>,
     pub decoder_callback: Mutex<Option<Box<DecoderCallback>>>,
     pub head_pose_queue: RwLock<VecDeque<(Duration, Pose)>>,
@@ -311,6 +312,7 @@ fn connection_pipeline(
     let mut haptics_receiver =
         stream_socket.subscribe_to_stream::<Haptics>(HAPTICS, MAX_UNREAD_PACKETS);
     let statistics_sender = stream_socket.request_stream(STATISTICS);
+    let eye_camera_sender = stream_socket.request_stream(EYE_CAMERA);
 
     let video_receive_thread = thread::spawn({
         let ctx = Arc::clone(&ctx);
@@ -570,6 +572,7 @@ fn connection_pipeline(
     *ctx.control_sender.lock() = Some(control_sender);
     *ctx.tracking_sender.lock() = Some(tracking_sender);
     *ctx.statistics_sender.lock() = Some(statistics_sender);
+    *ctx.eye_camera_sender.lock() = Some(eye_camera_sender);
     if let Switch::Enabled(filter_level) = settings.extra.logging.client_log_report_level {
         *LOG_CHANNEL_SENDER.lock() = Some(LogMirrorData {
             sender: log_channel_sender,
@@ -591,6 +594,7 @@ fn connection_pipeline(
     *ctx.control_sender.lock() = None;
     *ctx.tracking_sender.lock() = None;
     *ctx.statistics_sender.lock() = None;
+    *ctx.eye_camera_sender.lock() = None;
     *LOG_CHANNEL_SENDER.lock() = None;
 
     event_queue

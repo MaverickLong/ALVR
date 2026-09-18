@@ -21,6 +21,7 @@ openxr = { git = "https://github.com/Ralith/openxrs", rev = "9270509d23dc774b43a
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 jni = "0.21"
 libc = "0.2"
 ndk-context = "0.1"
@@ -63,6 +64,9 @@ name = "android.permission.INTERNET"
 name = "android.permission.ACCESS_NETWORK_STATE"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.RECORD_AUDIO"
+# CAMERA is required by Android to grant access to USB video class devices (eye cameras)
+[[package.metadata.android.uses_permission]]
+name = "android.permission.CAMERA"
 # WAKE_LOCK is needed for proper wifi locking
 # https://developer.android.com/reference/android/net/wifi/WifiManager.WifiLock
 [[package.metadata.android.uses_permission]]

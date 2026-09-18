@@ -25,7 +25,7 @@ use alvr_common::{
     HAND_RIGHT_ID, HEAD_ID,
 };
 use alvr_packets::{
-    BatteryInfo, ButtonEntry, ClientControlPacket, FaceData, RealTimeConfig,
+    BatteryInfo, ButtonEntry, ClientControlPacket, EyeCameraFrameHeader, FaceData, RealTimeConfig,
     ReservedClientControlPacket, StreamConfig, Tracking, ViewsConfig,
 };
 use alvr_session::CodecType;
@@ -322,6 +322,26 @@ impl ClientCoreContext {
 
             if let Some(stats) = &mut *self.connection_context.statistics_manager.lock() {
                 stats.report_input_acquired(reported_timestamp);
+            }
+        }
+    }
+
+    pub fn send_eye_camera_frame(&self, timestamp: Duration, left_jpeg: &[u8], right_jpeg: &[u8]) {
+        dbg_client_core!("send_eye_camera_frame");
+
+        if let Some(sender) = &mut *self.connection_context.eye_camera_sender.lock() {
+            let header = EyeCameraFrameHeader {
+                timestamp,
+                left_jpeg_size: left_jpeg.len() as u32,
+            };
+            if let Ok(mut buffer) = sender.get_buffer(&header) {
+                buffer
+                    .get_range_mut(0, left_jpeg.len())
+                    .copy_from_slice(left_jpeg);
+                buffer
+                    .get_range_mut(left_jpeg.len(), right_jpeg.len())
+                    .copy_from_slice(right_jpeg);
+                sender.send(buffer).ok();
             }
         }
     }

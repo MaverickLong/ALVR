@@ -1,5 +1,6 @@
 use crate::{
     bitrate::BitrateManager,
+    eye_camera::EyeCameraServer,
     hand_gestures::HandGestureManager,
     input_mapping::ButtonMappingManager,
     sockets::WelcomeSocket,
@@ -20,8 +21,9 @@ use alvr_common::{
 use alvr_events::{AdbEvent, ButtonEvent, EventType};
 use alvr_packets::{
     ClientConnectionResult, ClientControlPacket, ClientListAction, ClientStatistics,
-    NegotiatedStreamingConfig, RealTimeConfig, ReservedClientControlPacket, ServerControlPacket,
-    Tracking, VideoPacketHeader, AUDIO, HAPTICS, STATISTICS, TRACKING, VIDEO,
+    EyeCameraFrameHeader, NegotiatedStreamingConfig, RealTimeConfig, ReservedClientControlPacket,
+    ServerControlPacket, Tracking, VideoPacketHeader, AUDIO, EYE_CAMERA, HAPTICS, STATISTICS,
+    TRACKING, VIDEO,
 };
 use alvr_session::{
     BodyTrackingBDConfig, BodyTrackingSinkConfig, CodecType, ControllersEmulationMode, FrameSize,
@@ -863,6 +865,15 @@ fn connection_pipeline(
     let haptics_sender = stream_socket.request_stream(HAPTICS);
     let mut statics_receiver =
         stream_socket.subscribe_to_stream::<ClientStatistics>(STATISTICS, MAX_UNREAD_PACKETS);
+    let eye_camera_receiver = if let Switch::Enabled(config) = &initial_settings.headset.eye_cameras
+    {
+        let receiver = stream_socket
+            .subscribe_to_stream::<EyeCameraFrameHeader>(EYE_CAMERA, MAX_UNREAD_PACKETS);
+
+        Some((receiver, config.http_port))
+    } else {
+        None
+    };
 
     let (video_channel_sender, video_channel_receiver) =
         std::sync::mpsc::sync_channel(initial_settings.connection.max_queued_server_video_frames);
@@ -1079,6 +1090,38 @@ fn connection_pipeline(
                 }
             }
         }
+    });
+
+    let eye_camera_thread = eye_camera_receiver.map(|(mut receiver, http_port)| {
+        let client_hostname = client_hostname.clone();
+        thread::spawn(move || {
+            let server = match EyeCameraServer::new(http_port) {
+                Ok(server) => server,
+                Err(e) => {
+                    error!("Eye cameras: cannot start the MJPEG server on port {http_port}: {e}");
+                    return;
+                }
+            };
+
+            while is_streaming(&client_hostname) {
+                let data = match receiver.recv(STREAMING_RECV_TIMEOUT) {
+                    Ok(data) => data,
+                    Err(ConnectionError::TryAgain(_)) => continue,
+                    Err(ConnectionError::Other(_)) => return,
+                };
+                let Ok((header, payload)) = data.get() else {
+                    return;
+                };
+
+                let left_jpeg_size = header.left_jpeg_size as usize;
+                if left_jpeg_size <= payload.len() {
+                    server.push_frame(
+                        payload[..left_jpeg_size].to_vec(),
+                        payload[left_jpeg_size..].to_vec(),
+                    );
+                }
+            }
+        })
     });
 
     let control_sender = Arc::new(Mutex::new(control_sender));
@@ -1464,6 +1507,9 @@ fn connection_pipeline(
     microphone_thread.join().ok();
     tracking_receive_thread.join().ok();
     statistics_thread.join().ok();
+    if let Some(thread) = eye_camera_thread {
+        thread.join().ok();
+    }
     real_time_update_thread.join().ok();
     control_receive_thread.join().ok();
     stream_receive_thread.join().ok();
