@@ -915,6 +915,12 @@ pub struct FaceTrackingSourcesConfig {
     pub face_tracking_fb: bool,
     pub eye_expressions_htc: bool,
     pub lip_expressions_htc: bool,
+    #[schema(strings(
+        display_name = "HTC expressions poll rate",
+        help = "VIVE headsets only. How often the headset reads the HTC eye and lip expression trackers. The trackers sample at 60Hz; lower values reduce the headset CPU usage at the cost of choppier expressions."
+    ))]
+    #[schema(gui(slider(min = 10, max = 60)), suffix = "Hz")]
+    pub htc_expressions_poll_rate_hz: u32,
     pub face_tracking_pico: bool,
 }
 
@@ -1917,6 +1923,7 @@ pub fn session_settings_default() -> SettingsDefault {
                         face_tracking_fb: true,
                         eye_expressions_htc: true,
                         lip_expressions_htc: true,
+                        htc_expressions_poll_rate_hz: 60,
                         face_tracking_pico: true,
                     },
                     sink: FaceTrackingSinkConfigDefault {

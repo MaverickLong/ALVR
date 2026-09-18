@@ -10,6 +10,7 @@ use alvr_common::{
     anyhow::Result,
     error,
     glam::{UVec2, Vec2},
+    info,
     parking_lot::RwLock,
     Pose, RelaxedAtomic, ViewParams, HAND_LEFT_ID, HAND_RIGHT_ID, HEAD_ID,
 };
@@ -19,7 +20,8 @@ use alvr_graphics::{
 use alvr_packets::{FaceData, RealTimeConfig, StreamConfig};
 use alvr_session::{
     ClientsideFoveationConfig, ClientsideFoveationMode, ClientsidePostProcessingConfig, CodecType,
-    FoveatedEncodingConfig, MediacodecProperty, PassthroughMode, UpscalingConfig,
+    FaceTrackingSourcesConfig, FoveatedEncodingConfig, MediacodecProperty, PassthroughMode,
+    UpscalingConfig,
 };
 use alvr_system_info::Platform;
 use openxr as xr;
@@ -35,6 +37,101 @@ const DECODER_MAX_TIMEOUT_MULTIPLIER: f32 = 0.8;
 // Tracking is polled this many times per display frame so that the server always finds a recent
 // sample. Not used on Vive headsets, where the loop runs once per display frame.
 const TRACKING_OVERSAMPLING_FACTOR: u32 = 3;
+// Bounds of the server-configurable HTC facial expressions poll rate (Vive only). The eye and lip
+// trackers sample at 60Hz. session.json is user-editable, so the value is clamped here too.
+const HTC_EXPRESSIONS_POLL_RATE_MIN_HZ: u32 = 10;
+const HTC_EXPRESSIONS_POLL_RATE_MAX_HZ: u32 = 60;
+
+// How the stream input loop reads the HTC eye and lip expression trackers
+enum HtcExpressionsPolling {
+    // Every tracking tick, the pre-existing behavior, kept on every non-Vive platform
+    EveryTick,
+    // The server does not use the HTC expressions
+    Disabled,
+    // Vive: fixed rate, independent of the tracking tick. Between polls the last sample is
+    // repeated, so the server receives the same payload in every packet as before.
+    RateLimited {
+        interval: Duration,
+        next_deadline: Instant,
+        poll_eye: bool,
+        poll_lip: bool,
+        last_eye_expression: Option<Vec<f32>>,
+        last_lip_expression: Option<Vec<f32>>,
+    },
+}
+
+impl HtcExpressionsPolling {
+    fn new(platform: Platform, face_tracking_sources: Option<&FaceTrackingSourcesConfig>) -> Self {
+        if !platform.is_vive() {
+            return Self::EveryTick;
+        }
+
+        let Some(sources) = face_tracking_sources else {
+            return Self::Disabled;
+        };
+        if !sources.eye_expressions_htc && !sources.lip_expressions_htc {
+            return Self::Disabled;
+        }
+
+        let poll_rate_hz = sources.htc_expressions_poll_rate_hz.clamp(
+            HTC_EXPRESSIONS_POLL_RATE_MIN_HZ,
+            HTC_EXPRESSIONS_POLL_RATE_MAX_HZ,
+        );
+        info!("HTC facial expressions poll rate: {poll_rate_hz}Hz");
+
+        Self::RateLimited {
+            interval: Duration::from_secs_f32(1.0 / poll_rate_hz as f32),
+            next_deadline: Instant::now(),
+            poll_eye: sources.eye_expressions_htc,
+            poll_lip: sources.lip_expressions_htc,
+            last_eye_expression: None,
+            last_lip_expression: None,
+        }
+    }
+
+    fn poll(
+        &mut self,
+        face_sources: &interaction::FaceSources,
+        now: Duration,
+    ) -> (Option<Vec<f32>>, Option<Vec<f32>>) {
+        match self {
+            Self::EveryTick => (
+                interaction::get_htc_eye_expression(face_sources, now),
+                interaction::get_htc_lip_expression(face_sources, now),
+            ),
+            Self::Disabled => (None, None),
+            Self::RateLimited {
+                interval,
+                next_deadline,
+                poll_eye,
+                poll_lip,
+                last_eye_expression,
+                last_lip_expression,
+            } => {
+                let poll_time = Instant::now();
+                if poll_time >= *next_deadline {
+                    if *poll_eye {
+                        *last_eye_expression =
+                            interaction::get_htc_eye_expression(face_sources, now);
+                    }
+                    if *poll_lip {
+                        *last_lip_expression =
+                            interaction::get_htc_lip_expression(face_sources, now);
+                    }
+
+                    // Fixed cadence; after a stall resync to now instead of bursting to catch up
+                    *next_deadline = if *next_deadline + *interval <= poll_time {
+                        poll_time + *interval
+                    } else {
+                        *next_deadline + *interval
+                    };
+                }
+
+                (last_eye_expression.clone(), last_lip_expression.clone())
+            }
+        }
+    }
+}
 
 pub struct ParsedStreamConfig {
     pub view_resolution: UVec2,
@@ -285,6 +382,7 @@ impl StreamContext {
             let stage_reference_space = Arc::clone(&self.stage_reference_space);
             let view_reference_space = Arc::clone(&self.view_reference_space);
             let refresh_rate = self.config.refresh_rate_hint;
+            let face_tracking_sources = self.config.interaction_sources.face_tracking.clone();
             let running = Arc::clone(&self.input_thread_running);
             move || {
                 stream_input_loop(
@@ -294,6 +392,7 @@ impl StreamContext {
                     &stage_reference_space,
                     &view_reference_space,
                     refresh_rate,
+                    face_tracking_sources,
                     running,
                 )
             }
@@ -515,6 +614,7 @@ impl Drop for StreamContext {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 fn stream_input_loop(
     core_ctx: &ClientCoreContext,
     xr_session: xr::Session<xr::OpenGlEs>,
@@ -522,6 +622,7 @@ fn stream_input_loop(
     stage_reference_space: &xr::Space,
     view_reference_space: &xr::Space,
     refresh_rate: f32,
+    face_tracking_sources: Option<FaceTrackingSourcesConfig>,
     running: Arc<RelaxedAtomic>,
 ) {
     let platform = alvr_system_info::platform();
@@ -529,6 +630,9 @@ fn stream_input_loop(
     let mut last_controller_poses = [Pose::default(); 2];
     let mut last_palm_poses = [Pose::default(); 2];
     let mut last_view_params = [ViewParams::default(); 2];
+
+    let mut htc_expressions_polling =
+        HtcExpressionsPolling::new(platform, face_tracking_sources.as_ref());
 
     let frame_interval = Duration::from_secs_f32(1.0 / refresh_rate);
     // Vive: one sample per display frame. Every extra poll also pays the velocity fallback
@@ -621,6 +725,9 @@ fn stream_input_loop(
             }
         }
 
+        let (htc_eye_expression, htc_lip_expression) =
+            htc_expressions_polling.poll(&int_ctx.face_sources, now);
+
         let face_data = FaceData {
             eye_gazes: interaction::get_eye_gazes(
                 &xr_session,
@@ -631,8 +738,8 @@ fn stream_input_loop(
             fb_face_expression: interaction::get_fb_face_expression(&int_ctx.face_sources, now).or(
                 interaction::get_pico_face_expression(&int_ctx.face_sources, now),
             ),
-            htc_eye_expression: interaction::get_htc_eye_expression(&int_ctx.face_sources, now),
-            htc_lip_expression: interaction::get_htc_lip_expression(&int_ctx.face_sources, now),
+            htc_eye_expression,
+            htc_lip_expression,
         };
 
         if let Some((tracker, joint_count)) = &int_ctx.body_sources.body_tracker_fb {
