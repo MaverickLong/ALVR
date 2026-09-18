@@ -32,6 +32,9 @@ use std::{
 };
 
 const DECODER_MAX_TIMEOUT_MULTIPLIER: f32 = 0.8;
+// Tracking is polled this many times per display frame so that the server always finds a recent
+// sample. Not used on Vive headsets, where the loop runs once per display frame.
+const TRACKING_OVERSAMPLING_FACTOR: u32 = 3;
 
 pub struct ParsedStreamConfig {
     pub view_resolution: UVec2,
@@ -527,8 +530,18 @@ fn stream_input_loop(
     let mut last_palm_poses = [Pose::default(); 2];
     let mut last_view_params = [ViewParams::default(); 2];
 
-    let mut deadline = Instant::now();
     let frame_interval = Duration::from_secs_f32(1.0 / refresh_rate);
+    // Vive: one sample per display frame. Every extra poll also pays the velocity fallback
+    // locate() calls and the runtime IPC, and the runtime tracking runs at most at display rate.
+    // The timer is free-running on purpose: it must not follow the render thread, which stalls
+    // while waiting for the decoder and is skipped entirely while should_render is false.
+    let poll_interval = if platform.is_vive() {
+        frame_interval
+    } else {
+        frame_interval / TRACKING_OVERSAMPLING_FACTOR
+    };
+
+    let mut deadline = Instant::now();
     while running.value() {
         let int_ctx = &*interaction_ctx.read();
         // Streaming related inputs are updated here. Make sure every input poll is done in this
@@ -555,6 +568,13 @@ fn stream_input_loop(
             target_time,
             &last_view_params,
         ) else {
+            // Head tracking is invalid (headset lifted, tracking lost). On Vive keep the loop
+            // paced instead of spinning at full speed
+            if platform.is_vive() {
+                deadline += poll_interval;
+                thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            }
+
             continue;
         };
 
@@ -648,7 +668,7 @@ fn stream_input_loop(
             core_ctx.send_buttons(button_entries);
         }
 
-        deadline += frame_interval / 3;
+        deadline += poll_interval;
         thread::sleep(deadline.saturating_duration_since(Instant::now()));
     }
 }
