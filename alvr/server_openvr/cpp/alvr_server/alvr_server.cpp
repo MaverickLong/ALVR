@@ -91,6 +91,7 @@ public:
     std::map<uint64_t, TrackedDevice*> tracked_devices;
 
     virtual vr::EVRInitError Init(vr::IVRDriverContext* pContext) override {
+        InitializeRuntime(); // sets up rust logging/runtime, keep first
         Debug("DriverProvider::Init");
 
         VR_INIT_SERVER_DRIVER_CONTEXT(pContext);
@@ -200,26 +201,6 @@ unsigned int RGBTOYUV420_SHADER_COMP_SPV_LEN;
 
 const char* g_sessionPath;
 const char* g_driverRootDir;
-
-void (*LogError)(const char* stringPtr);
-void (*LogWarn)(const char* stringPtr);
-void (*LogInfo)(const char* stringPtr);
-void (*LogDebug)(const char* stringPtr);
-void (*LogEncoder)(const char* stringPtr);
-void (*LogPeriodically)(const char* tag, const char* stringPtr);
-void (*DriverReadyIdle)(bool setDefaultChaprone);
-void (*SetVideoConfigNals)(const unsigned char* configBuffer, int len, int codec);
-void (*VideoSend)(unsigned long long targetTimestampNs, unsigned char* buf, int len, bool isIdr);
-void (*HapticsSend)(unsigned long long path, float duration_s, float frequency, float amplitude);
-void (*ShutdownRuntime)();
-unsigned long long (*PathStringToHash)(const char* path);
-void (*ReportPresent)(unsigned long long timestamp_ns, unsigned long long offset_ns);
-void (*ReportComposed)(unsigned long long timestamp_ns, unsigned long long offset_ns);
-FfiDynamicEncoderParams (*GetDynamicEncoderParams)();
-unsigned long long (*GetSerialNumber)(unsigned long long deviceID, char* outString);
-void (*SetOpenvrProps)(void* instancePtr, unsigned long long deviceID);
-void (*RegisterButtons)(void* instancePtr, unsigned long long deviceID);
-void (*WaitForVSync)();
 
 void CppInit(bool earlyHmdInitialization) {
     g_driver_provider.early_hmd_initialization = earlyHmdInitialization;
