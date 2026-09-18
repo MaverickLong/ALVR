@@ -1,5 +1,6 @@
 use crate::{
     graphics::{self, ProjectionLayerAlphaConfig, ProjectionLayerBuilder},
+    hand_tracking_gate::HandTrackingGate,
     interaction::{self, InteractionContext, InteractionSourcesConfig},
 };
 use alvr_client_core::{
@@ -633,6 +634,8 @@ fn stream_input_loop(
 
     let mut htc_expressions_polling =
         HtcExpressionsPolling::new(platform, face_tracking_sources.as_ref());
+    // Focus Vision only: 60Hz joints polling and hand tracker lifetime. Pass-through elsewhere.
+    let mut hand_tracking = HandTrackingGate::new(platform, interaction_ctx);
 
     let frame_interval = Duration::from_secs_f32(1.0 / refresh_rate);
     // Vive: one sample per display frame. Every extra poll also pays the velocity fallback
@@ -647,7 +650,10 @@ fn stream_input_loop(
 
     let mut deadline = Instant::now();
     while running.value() {
-        let int_ctx = &*interaction_ctx.read();
+        // Named guard: released before the hand tracking gate takes the write lock at the end of
+        // the iteration
+        let int_ctx_guard = interaction_ctx.read();
+        let int_ctx = &*int_ctx_guard;
         // Streaming related inputs are updated here. Make sure every input poll is done in this
         // thread
         if let Err(e) = xr_session.sync_actions(&[(&int_ctx.action_set).into()]) {
@@ -691,7 +697,9 @@ fn stream_input_loop(
 
         device_motions.push((*HEAD_ID, head_motion));
 
-        let (left_hand_motion, left_hand_skeleton) = crate::interaction::get_hand_data(
+        let joints_poll = hand_tracking.joints_poll();
+
+        let (left_hand_motion, left_hand_joints) = crate::interaction::get_hand_data(
             &xr_session,
             platform,
             stage_reference_space,
@@ -700,8 +708,9 @@ fn stream_input_loop(
             &int_ctx.hands_interaction[0],
             &mut last_controller_poses[0],
             &mut last_palm_poses[0],
+            joints_poll,
         );
-        let (right_hand_motion, right_hand_skeleton) = crate::interaction::get_hand_data(
+        let (right_hand_motion, right_hand_joints) = crate::interaction::get_hand_data(
             &xr_session,
             platform,
             stage_reference_space,
@@ -710,7 +719,11 @@ fn stream_input_loop(
             &int_ctx.hands_interaction[1],
             &mut last_controller_poses[1],
             &mut last_palm_poses[1],
+            joints_poll,
         );
+
+        let [left_hand_skeleton, right_hand_skeleton] =
+            hand_tracking.skeletons(joints_poll, [left_hand_joints, right_hand_joints]);
 
         // Note: When multimodal input is enabled, we are sure that when free hands are used
         // (not holding controllers) the controller data is None.
@@ -774,6 +787,9 @@ fn stream_input_loop(
         if !button_entries.is_empty() {
             core_ctx.send_buttons(button_entries);
         }
+
+        drop(int_ctx_guard);
+        hand_tracking.update([left_hand_motion, right_hand_motion]);
 
         deadline += poll_interval;
         thread::sleep(deadline.saturating_duration_since(Instant::now()));

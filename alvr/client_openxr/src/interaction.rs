@@ -95,9 +95,27 @@ fn create_ext_object<T>(
         .flatten()
 }
 
+fn create_hand_trackers(xr_session: &xr::Session<xr::OpenGlEs>) -> [Option<xr::HandTracker>; 2] {
+    [
+        create_ext_object("HandTracker (left)", Some(true), || {
+            xr_session.create_hand_tracker(xr::Hand::LEFT)
+        }),
+        create_ext_object("HandTracker (right)", Some(true), || {
+            xr_session.create_hand_tracker(xr::Hand::RIGHT)
+        }),
+    ]
+}
+
 pub enum ButtonAction {
     Binary(xr::Action<bool>),
     Scalar(xr::Action<f32>),
+}
+
+// Whether get_hand_data should locate the hand joints on this tick
+#[derive(Clone, Copy)]
+pub enum HandJointsPoll {
+    Locate,
+    Skip,
 }
 
 pub struct HandInteraction {
@@ -400,12 +418,7 @@ impl InteractionContext {
             .create_space(xr_session.clone(), xr::Path::NULL, xr::Posef::IDENTITY)
             .unwrap();
 
-        let left_hand_tracker = create_ext_object("HandTracker (left)", Some(true), || {
-            xr_session.create_hand_tracker(xr::Hand::LEFT)
-        });
-        let right_hand_tracker = create_ext_object("HandTracker (right)", Some(true), || {
-            xr_session.create_hand_tracker(xr::Hand::RIGHT)
-        });
+        let [left_hand_tracker, right_hand_tracker] = create_hand_trackers(&xr_session);
 
         // Note: HTC facial tracking can only be created at startup before xrBeginSession. We don't
         // know the reason.
@@ -617,6 +630,38 @@ impl InteractionContext {
             face_tracker.start_face_tracking().ok();
         }
     }
+
+    pub fn has_hand_trackers(&self) -> bool {
+        self.hands_interaction
+            .iter()
+            .all(|hand| hand.skeleton_tracker.is_some())
+    }
+
+    // Checks that the runtime accepts creating a hand tracker while the session runs. The probe
+    // object is destroyed immediately.
+    pub fn can_create_hand_tracker(&self) -> bool {
+        self.xr_session.create_hand_tracker(xr::Hand::LEFT).is_ok()
+    }
+
+    // On the HTC runtime the camera hand tracking pipeline runs for as long as the XrHandTrackerEXT
+    // objects exist. Only the hand tracking gate calls this and `release_hand_trackers`; every
+    // other platform keeps the trackers created in `new` for the whole session.
+    pub fn ensure_hand_trackers(&mut self) -> bool {
+        if !self.has_hand_trackers() {
+            let [left, right] = create_hand_trackers(&self.xr_session);
+            self.hands_interaction[0].skeleton_tracker = left;
+            self.hands_interaction[1].skeleton_tracker = right;
+        }
+
+        self.has_hand_trackers()
+    }
+
+    // Dropping the objects calls xrDestroyHandTrackerEXT
+    pub fn release_hand_trackers(&mut self) {
+        for hand in &mut self.hands_interaction {
+            hand.skeleton_tracker = None;
+        }
+    }
 }
 
 pub fn get_reference_space(
@@ -748,6 +793,7 @@ pub fn get_hand_data(
     hand_source: &HandInteraction,
     last_controller_pose: &mut Pose,
     last_palm_pose: &mut Pose,
+    joints_poll: HandJointsPoll,
 ) -> (Option<DeviceMotion>, Option<[Pose; 26]>) {
     let xr_time = crate::to_xr_time(time);
 
@@ -820,7 +866,9 @@ pub fn get_hand_data(
         None
     };
 
-    let hand_joints = if let Some(tracker) = &hand_source.skeleton_tracker {
+    let hand_joints = if let (HandJointsPoll::Locate, Some(tracker)) =
+        (joints_poll, &hand_source.skeleton_tracker)
+    {
         let xr_now = crate::xr_runtime_now(xr_session.instance()).unwrap_or(xr_time);
 
         if let Some(joint_locations) = reference_space

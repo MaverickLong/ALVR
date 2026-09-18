@@ -121,6 +121,7 @@ impl Lobby {
             &self.interaction_ctx.read().hands_interaction[0],
             &mut Pose::default(),
             &mut Pose::default(),
+            interaction::HandJointsPoll::Locate,
         );
         let right_hand_data = interaction::get_hand_data(
             &self.xr_session,
@@ -131,6 +132,7 @@ impl Lobby {
             &self.interaction_ctx.read().hands_interaction[1],
             &mut Pose::default(),
             &mut Pose::default(),
+            interaction::HandJointsPoll::Locate,
         );
 
         let additional_motions = self

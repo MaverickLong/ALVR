@@ -1,6 +1,7 @@
 mod c_api;
 mod extra_extensions;
 mod graphics;
+mod hand_tracking_gate;
 mod interaction;
 mod lobby;
 mod passthrough;
