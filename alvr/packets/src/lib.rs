@@ -5,7 +5,8 @@ use alvr_common::{
     ConnectionState, DeviceMotion, Fov, LogEntry, LogSeverity, Pose, ToAny,
 };
 use alvr_session::{
-    ClientsidePostProcessingConfig, CodecType, PassthroughMode, SessionConfig, Settings,
+    ClientsidePostProcessingConfig, CodecType, PassthroughMode, PerformanceLevel, SessionConfig,
+    Settings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json as json;
@@ -407,6 +408,8 @@ pub enum ServerRequest {
 pub struct RealTimeConfig {
     pub passthrough: Option<PassthroughMode>,
     pub clientside_post_processing: Option<ClientsidePostProcessingConfig>,
+    pub cpu_performance_level: Option<PerformanceLevel>,
+    pub gpu_performance_level: Option<PerformanceLevel>,
 }
 
 impl RealTimeConfig {
@@ -428,6 +431,8 @@ impl RealTimeConfig {
                 .clientside_post_processing
                 .clone()
                 .into_option(),
+            cpu_performance_level: settings.headset.performance_level.clone().cpu.into_option(),
+            gpu_performance_level: settings.headset.performance_level.clone().gpu.into_option(),
         }
     }
 }
